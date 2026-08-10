@@ -1,68 +1,76 @@
-# Fior Glow — Backend (Node.js + Express + SQLite)
+# Fior Glow — Backend (Node.js + Express + MongoDB Atlas)
 
-## এটা কী
+সাইট internet এ real customer দের জন্য live করার জন্য এই ৪টা ধাপ অনুসরণ করো।
 
-এটা তোমার Fior Glow সাইটের জন্য একটা real Node.js backend, যেটা তোমার আগের
-Netlify Function (`/api/data`) এর জায়গা নিয়েছে — কিন্তু API একদম আগের মতোই,
-তাই তোমার `fior_glow_web.js` ফাইলে **একটা লাইনও বদলাতে হয়নি**।
+---
 
-- Data আগে localStorage / Netlify Blobs এ ছিল → এখন একটা real **SQLite** ফাইলে
-  (`data/fiorglow.db`) সেভ হয়।
-- Server বন্ধ করে আবার চালু করলেও ডাটা থেকেই যাবে।
-- Frontend ফাইলগুলো (`public/index.html`, `public/fior_glow_web.css`,
-  `public/fior_glow_web.js`) এই backend থেকেই সার্ভ হয় — মানে একটাই সার্ভার
-  চালালে পুরো সাইট + backend দুটোই কাজ করবে।
+## ধাপ ১: MongoDB Atlas — ফ্রি database বানাও
 
-## কীভাবে চালাবে (VS Code)
+1. যাও: https://www.mongodb.com/cloud/atlas/register
+2. একটা ফ্রি account বানাও (email/Google দিয়ে)
+3. "Create a deployment" → **M0 (Free)** টিয়ার সিলেক্ট করো
+4. Cluster তৈরি হতে ১-২ মিনিট সময় নেবে
+5. একটা database user বানাতে বলবে — username আর password দাও, **এই password টা লিখে রাখো**
+6. "Network Access" এ যাও → **"Allow Access from Anywhere"** (0.0.0.0/0) সিলেক্ট করো (এটা জরুরি, নাহলে Render থেকে connect হবে না)
+7. "Connect" বাটনে ক্লিক করো → **"Drivers"** সিলেক্ট করো → একটা connection string দেখাবে, এরকম:
+   ```
+   mongodb+srv://username:<password>@cluster0.xxxxx.mongodb.net/
+   ```
+8. `<password>` এর জায়গায় তোমার আসল password বসাও, পুরো string টা কোথাও সেভ করে রাখো — এটাই তোমার `MONGODB_URI`
 
-1. এই ফোল্ডারটা VS Code এ খোলো।
-2. Terminal খুলে (Ctrl + `) লেখো:
+---
+
+## ধাপ ২: GitHub account বানাও ও কোড আপলোড করো
+
+1. যাও: https://github.com/signup
+2. ফ্রি account বানাও
+3. Login করার পর, উপরে ডান কোণায় **"+"** আইকনে ক্লিক করো → **"New repository"**
+4. একটা নাম দাও (যেমন `fior-glow-backend`), **Public** সিলেক্ট করো, তারপর **"Create repository"**
+5. নতুন repository পেজে **"uploading an existing file"** লিংকে ক্লিক করো
+6. এই ফোল্ডারের ভেতরের সব ফাইল আর ফোল্ডার (`server.js`, `package.json`, `public` ফোল্ডার, `README.md`, `.gitignore` — **`node_modules` ফোল্ডার ও `.env` ফাইল বাদে**) drag করে ওই পেজে ছেড়ে দাও
+7. নিচে "Commit changes" বাটনে ক্লিক করো
+
+---
+
+## ধাপ ৩: Render.com এ deploy করো
+
+1. যাও: https://render.com এবং GitHub দিয়ে sign up করো
+2. Dashboard এ **"New +"** → **"Web Service"**
+3. তোমার GitHub repo (`fior-glow-backend`) সিলেক্ট করো (permission চাইলে allow করো)
+4. Settings এ:
+   - **Name:** যা খুশি (যেমন `fior-glow`)
+   - **Build Command:** `npm install`
+   - **Start Command:** `npm start`
+   - **Instance Type:** Free
+5. নিচে **"Environment Variables"** সেকশনে **"Add Environment Variable"** ক্লিক করো:
+   - Key: `MONGODB_URI`
+   - Value: ধাপ ১ এ যেই connection string সেভ করেছিলে সেটা পেস্ট করো
+6. **"Deploy Web Service"** ক্লিক করো
+7. ২-৩ মিনিট অপেক্ষা করো — শেষে একটা লিংক দেবে, এরকম:
+   ```
+   https://fior-glow.onrender.com
+   ```
+   এটাই তোমার সাইটের **live লিংক** — যে কেউ, যেকোনো জায়গা থেকে এটা খুলতে পারবে।
+
+---
+
+## ধাপ ৪: নিজের কম্পিউটারে টেস্ট করতে চাইলে (optional)
+
+1. এই ফোল্ডারে একটা `.env` নামের ফাইল বানাও (VS Code এ New File)
+2. ভেতরে লেখো:
+   ```
+   MONGODB_URI=তোমার_connection_string
+   ```
+3. Terminal এ:
    ```
    npm install
-   ```
-   (শুধু প্রথমবার লাগবে — এটা `express`, `better-sqlite3`, `cors` ইনস্টল করবে)
-3. তারপর লেখো:
-   ```
    npm start
    ```
-4. Terminal এ দেখাবে: `Site: http://localhost:3000` — সেটা browser এ খুলে ফেলো।
-   পুরো সাইট এখান থেকেই চলবে, আর সব change (product add/edit, order, review,
-   admin panel — সবকিছু) এখন সত্যিকারের backend এ সেভ হবে।
+4. Browser এ `http://localhost:3000`
 
-Server বন্ধ করতে Terminal এ `Ctrl + C` চাপো।
+---
 
-## ফোল্ডার স্ট্রাকচার
+## মনে রাখার বিষয়
 
-```
-fior-backend/
-  server.js              ← main backend file (Express + SQLite)
-  package.json           ← dependency list
-  data/
-    fiorglow.db           ← (এটা নিজে থেকে তৈরি হবে, প্রথমবার চালানোর পর)
-  public/
-    index.html            ← তোমার fior.html
-    fior_glow_web.css      ← তোমার fior.css
-    fior_glow_web.js       ← তোমার fior.js
-```
-
-## যদি port 3000 আগে থেকে ব্যবহার হয়ে থাকে
-
-Terminal এ এভাবে চালাও:
-```
-PORT=4000 npm start
-```
-তারপর browser এ `http://localhost:4000` খুলবে।
-
-## এরপর কী করা যায় (পরের ধাপ, এখন লাগবে না)
-
-এই backend টা এখন তোমার আগের সিস্টেমের একটা secure, persistent replacement —
-কিন্তু এখনো সবার জন্য read/write খোলা (তোমার আগের সিস্টেমও এমনই ছিল)। পরের
-ধাপে যোগ করা যায়:
-
-- Admin passcode চেক করে শুধু admin কে product/banner/etc বদলাতে দেওয়া
-- Order বসানোর সময় server নিজে থেকে price/stock verify করা (client কে
-  বিশ্বাস না করে)
-- Password hashing (bcrypt) দিয়ে real user authentication
-
-এগুলা চাইলে পরে যোগ করে দেব — এখন যেটা আছে সেটা দিয়েই পুরো সাইট চলে যাবে,
-আর সব ডাটা সত্যিকারের backend এ সেভ হবে।
+- Render এর **ফ্রি প্ল্যানে** সাইট ১৫ মিনিট কেউ visit না করলে "ঘুমিয়ে" যায় — পরের visitor এ আবার জেগে উঠতে ৩০-৫০ সেকেন্ড লাগতে পারে। এটা স্বাভাবিক, ডাটা হারায় না (কারণ ডাটা MongoDB তে, Render এ না)।
+- `.env` ফাইলটা **কখনো GitHub এ আপলোড করবে না** (`.gitignore` এ এটা বাদ দেওয়াই আছে) — এতে তোমার database password থাকে।

@@ -1,7 +1,7 @@
 {
   "name": "fior-glow-backend",
   "version": "1.0.0",
-  "description": "Fior Glow — Node.js/Express backend with JSON file storage",
+  "description": "Fior Glow — Node.js/Express backend with MongoDB Atlas storage",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
@@ -10,6 +10,10 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "mongodb": "^6.9.0",
+    "dotenv": "^16.4.5",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
   }
 }

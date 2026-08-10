@@ -310,10 +310,18 @@
             return data.value; // string or null
         }
 
+        // CHANGED: sends the admin token (if we have one from a successful
+        // /api/admin/login) as an Authorization header. The server only
+        // actually requires this for the products key — every other key
+        // ignores it — but sending it always is harmless and simpler.
         async function cloudSet(key, value) {
+            const adminToken = (typeof getAdminToken === 'function') ? getAdminToken() : null;
             const res = await fetch(`/api/data?key=${encodeURIComponent(key)}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(adminToken ? { 'Authorization': 'Bearer ' + adminToken } : {})
+                },
                 body: JSON.stringify({ value })
             });
             if (!res.ok) throw new Error('cloud set failed');
@@ -1974,14 +1982,18 @@ function launchConfetti() {
         setTimeout(() => piece.remove(), 4000);
     }
 }
-        function submitOrder() {
-const name = document.getElementById('custName').value.trim();
+        // CHANGED: order placement now calls the secure /api/orders endpoint —
+        // the server looks up each product's REAL price/stock itself and
+        // computes the total; nothing the browser sends about price is
+        // trusted anymore. The WhatsApp message and success screen are built
+        // from the total the SERVER returns, not from the client's own cart math.
+        async function submitOrder() {
+            const name = document.getElementById('custName').value.trim();
             const phone = document.getElementById('custPhone').value.trim();
             const email = document.getElementById('custEmail').value.trim();
             const district = document.getElementById('custDistrict').value;
             const area = document.getElementById('custArea').value.trim();
             const addressLine = document.getElementById('custAddress').value.trim();
-            const address = [addressLine, area, district].filter(Boolean).join(', ');
             const notes = document.getElementById('custNotes').value.trim();
             const trxId = document.getElementById('custTrxId').value.trim();
 
@@ -1990,89 +2002,85 @@ const name = document.getElementById('custName').value.trim();
             if (!district) { showToast('Please select your district'); return; }
             if (!area) { showToast('Please enter your area'); return; }
             if (!addressLine) { showToast('Please enter your address'); return; }
-            // ADDED: bKash orders must include a Transaction ID before they can be confirmed
             if (selectedPaymentMethod === 'bkash' && !trxId) {
                 showToast('Please enter your bKash Transaction ID');
                 return;
             }
 
-            const subtotal = getCartSubtotal();
-            const discount = getCouponDiscountAmount(subtotal);
-            const shipping = getShippingFee();
-            const total = getCartTotal();
-            const orderLines = cart.map(i => `• ${i.name.split(':')[0]} × ${i.qty} = ৳${(i.price * i.qty).toLocaleString()}`).join('%0A');
-            // ADDED: coupon line included in the WhatsApp order message when applied
-            const couponLine = appliedCoupon
-                ? `%0A*Coupon:* ${appliedCoupon.code} (${appliedCoupon.percent}% off, −৳${discount.toLocaleString()})`
-                : '';
-            // ADDED: shipping line — shows FREE once the order crosses the threshold
-            const shippingLine = `%0A*Shipping:* ${shipping === 0 ? 'FREE' : '৳' + shipping.toLocaleString()}`;
+            const confirmBtn = document.getElementById('placeOrderBtn');
+            if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Placing order...'; }
 
-            // ADDED: payment method line included in the WhatsApp message so the admin
-            // knows immediately whether to check bKash for the Transaction ID or collect
-            // cash on delivery.
-            const paymentLine = selectedPaymentMethod === 'bkash'
-                ? `*Payment:* bKash (Trx ID: ${trxId})`
+            let order;
+            try {
+                const authToken = getAuthToken();
+                const res = await fetch('/api/orders', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(authToken ? { 'Authorization': 'Bearer ' + authToken } : {})
+                    },
+                    body: JSON.stringify({
+                        items: cart.map(i => ({ id: i.id, variantId: i.variantId || null, qty: i.qty })),
+                        name, phone, email, district, area, addressLine, notes,
+                        paymentMethod: selectedPaymentMethod,
+                        trxId: selectedPaymentMethod === 'bkash' ? trxId : null,
+                        couponCode: appliedCoupon ? appliedCoupon.code : null
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    showToast(data.error || 'Could not place order — please try again');
+                    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm Order'; }
+                    return;
+                }
+                order = data.order;
+            } catch (e) {
+                showToast('Network error — please check your connection and try again');
+                if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm Order'; }
+                return;
+            }
+
+            // Everything below uses order.* (server-computed) instead of the
+            // client's own cart totals.
+            const orderLines = order.items.map(i => `• ${i.name.split(':')[0]} × ${i.qty} = ৳${(i.price * i.qty).toLocaleString()}`).join('%0A');
+            const couponLine = order.coupon
+                ? `%0A*Coupon:* ${order.coupon} (−৳${order.discount.toLocaleString()})`
+                : '';
+            const shippingLine = `%0A*Shipping:* ${order.shipping === 0 ? 'FREE' : '৳' + order.shipping.toLocaleString()}`;
+            const paymentLine = order.paymentMethod === 'bkash'
+                ? `*Payment:* bKash (Trx ID: ${order.trxId})`
                 : `*Payment:* Cash on Delivery`;
 
-            const msg = `🌸 *New Fior Glow Order*%0A%0A*Customer:* ${name}%0A*Phone:* ${phone}%0A*Address:* ${address || 'Not provided'}%0A%0A*Items:*%0A${orderLines}${couponLine}${shippingLine}%0A%0A*Total: ৳${total.toLocaleString()}*%0A${paymentLine}%0A%0A*Notes:* ${notes || 'None'}`;
-
+            const msg = `🌸 *New Fior Glow Order*%0A%0A*Customer:* ${name}%0A*Phone:* ${phone}%0A*Address:* ${order.address || 'Not provided'}%0A%0A*Items:*%0A${orderLines}${couponLine}${shippingLine}%0A%0A*Total: ৳${order.total.toLocaleString()}*%0A${paymentLine}%0A%0A*Notes:* ${notes || 'None'}`;
             const waLink = `https://wa.me/${SHOP_WA_NUMBER}?text=${msg}`;
 
-            // ADDED: record this order in ORDERS so it shows up under the
-            // customer's profile in the Admin Panel → Customers tab, with the
-            // exact products bought and the date/time it happened. Tagged by
-            // the logged-in customer's email (if any) and by phone, so guest
-            // checkouts using a signed-up customer's number still match.
-            const current = getCurrentCustomer();
-            const newOrder = {
-                id: Date.now(),
-                customerEmail: current ? current.email : null,
-                customerName: name,
-customerPhone: phone,
-                email, district, area,
-                items: cart.map(i => ({ name: i.name.split(':')[0], qty: i.qty, price: i.price })),
-                subtotal, discount, shipping, total,
-                coupon: appliedCoupon ? appliedCoupon.code : null,
-                paymentMethod: selectedPaymentMethod,
-                trxId: selectedPaymentMethod === 'bkash' ? trxId : null,
-                address, notes,
-                status: 'Pending',
-                date: new Date().toISOString()
-            };
-ORDERS.push(newOrder);
-            saveOrders(); // fire-and-forget so the WhatsApp redirect isn't delayed
+            sendToGoogleSheet('save_order', order);
 
-            // ADDED: send this order straight to the Google Sheet (Orders tab),
-            // same pattern as save_product / save_customer above.
-            sendToGoogleSheet('save_order', newOrder);
-
-            // ADDED: "Save this address to my profile" checkbox — pushes this
-            // exact address into the logged-in customer's saved address book.
+            // "Save this address to my profile" checkbox
             const saveAddrChk = document.getElementById('custSaveAddress');
+            const current = getCurrentCustomer();
             if (saveAddrChk && saveAddrChk.checked && current) {
                 if (!current.addresses) current.addresses = [];
-                current.addresses.push({ id: Date.now(), label: `${district} — ${area}`, text: address, phone });
+                current.addresses.push({ id: Date.now(), label: `${district} — ${area}`, text: order.address, phone });
                 saveUsers();
             }
 
             document.getElementById('waLink').href = waLink;
             document.getElementById('checkoutForm').style.display = 'none';
             document.getElementById('successScreen').classList.add('show');
-            launchConfetti(); // ADDED
+            launchConfetti();
 
-            // Clear cart + coupon
-           cart = [];
+            cart = [];
             appliedCoupon = null;
             updateCartUI();
 
-            // ADDED: reset the checkout form fields for the next order
             document.getElementById('custDistrict').value = '';
             document.getElementById('custArea').value = '';
             document.getElementById('custArea').disabled = true;
             document.getElementById('custArea').placeholder = 'Select district first';
             document.getElementById('custEmail').value = '';
             if (saveAddrChk) saveAddrChk.checked = false;
+            if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm Order'; }
         }
 
         function showToast(msg) {
@@ -2854,18 +2862,16 @@ ORDERS.push(newOrder);
             el.textContent = '';
         }
 
-        function adminLogin() {
+        // CHANGED: the owner passcode is no longer compared inside this file
+        // (anyone could read AUTHORITY_PASSCODE via "View Source" before this
+        // change). It's now checked by the server against an environment
+        // variable (ADMIN_PASSCODE, set in Render's dashboard) via
+        // /api/admin/login, which returns a token used to authorize product
+        // catalog writes. Team-member passcodes stay as a quick local check
+        // (unchanged) since those are already only known to invited people.
+        async function adminLogin() {
             const pass = document.getElementById('adminPasscodeInput').value;
             hideAdminLoginError();
-
-            // Authority (owner) — full access
-            if (pass === AUTHORITY_PASSCODE) {
-                isAdmin = true;
-                currentAdminPermissions = 'all';
-                closeAdminLogin();
-                openAdminPanel();
-                return;
-            }
 
             // A specific team member's own personal passcode (owner sets this per member)
             const member = TEAM.find(m => m.passcode && m.passcode === pass && (m.role === 'admin' || m.role === 'moderator'));
@@ -2877,7 +2883,34 @@ ORDERS.push(newOrder);
                 return;
             }
 
+            // Owner passcode — verified server-side
+            try {
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ passcode: pass })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    try { localStorage.setItem(ADMIN_TOKEN_KEY, data.token); } catch (e) { }
+                    isAdmin = true;
+                    currentAdminPermissions = 'all';
+                    closeAdminLogin();
+                    openAdminPanel();
+                    return;
+                }
+            } catch (e) { /* network issue — fall through to error below */ }
+
             showAdminLoginError('Wrong passcode 🚫');
+        }
+
+        // ADDED: the admin token proving a successful server-side passcode
+        // check — sent as "Authorization: Bearer <token>" whenever the
+        // Products tab saves a change, since /api/data now requires it for
+        // that specific key.
+        const ADMIN_TOKEN_KEY = 'fiorglow_admin_token';
+        function getAdminToken() {
+            try { return localStorage.getItem(ADMIN_TOKEN_KEY); } catch (e) { return null; }
         }
 
         // ADDED: "Request Access" tab — shared join passcode + name, sends a pending
@@ -3438,6 +3471,15 @@ ORDERS.push(newOrder);
         // ==========================================================================
         const USERS_KEY = 'fiorglow_users_v1';
         const CURRENT_USER_KEY = 'fiorglow_current_user';
+        // ADDED: real login now issues a JWT from the server (see submitSignup/
+        // submitLogin below) — stored here and sent as "Authorization: Bearer
+        // <token>" on requests that need to prove who's logged in (placing an
+        // order, fetching "my orders"). This is separate from CURRENT_USER_KEY,
+        // which just remembers which email to show in the UI.
+        const AUTH_TOKEN_KEY = 'fiorglow_auth_token';
+        function getAuthToken() {
+            try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch (e) { return null; }
+        }
         let USERS = [];
         let currentAuthTab = 'signup';
 
@@ -3649,6 +3691,13 @@ ORDERS.push(newOrder);
             el.textContent = '';
         }
 
+        // CHANGED: signup now calls the server's /api/auth/register — the
+        // server (not the browser) hashes the password with bcrypt and is the
+        // one source of truth for "does this email already exist". A JWT
+        // token comes back and is stored for future authenticated requests
+        // (placing orders, fetching "my orders"). A passwordless copy is also
+        // kept in the local USERS list so the Admin Panel's Customers tab
+        // keeps showing signups exactly as before.
         async function submitSignup() {
             const name = document.getElementById('signupName').value.trim();
             const email = document.getElementById('signupEmail').value.trim();
@@ -3662,25 +3711,28 @@ ORDERS.push(newOrder);
             if (!phone || phone.replace(/\D/g, '').length !== 11) { showAuthError('Mobile number must be exactly 11 digits (e.g. 01XXXXXXXXX).'); return; }
             if (!password || password.length < 6) { showAuthError('Password must be at least 6 characters.'); return; }
 
-            if (findUserByEmailOrPhone(email) || findUserByEmailOrPhone(phone)) {
-                showAuthError('An account with this email or mobile number already exists. Please log in instead.');
+            let data;
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email, phone, password })
+                });
+                data = await res.json();
+                if (!res.ok) { showAuthError(data.error || 'Could not create account'); return; }
+            } catch (e) {
+                showAuthError('Network error — please check your connection and try again.');
                 return;
             }
 
-            const passwordHash = await hashPassword(password);
-            const newUser = {
-                id: Date.now(),
-                name, email, phone,
-                passwordHash,
-                notify,
-                createdAt: new Date().toISOString()
-            };
+            try { localStorage.setItem(AUTH_TOKEN_KEY, data.token); } catch (e) { }
+
+            const newUser = { id: Date.now(), name, email: data.user.email, phone, notify, addresses: [], createdAt: data.user.createdAt };
             USERS.push(newUser);
             await saveUsers();
-            // গুগল শীটে কাস্টমার ইনফো সেন্ড করা
             sendToGoogleSheet('save_customer', newUser);
 
-            try { localStorage.setItem(CURRENT_USER_KEY, email.toLowerCase()); } catch (e) { }
+            try { localStorage.setItem(CURRENT_USER_KEY, data.user.email); } catch (e) { }
 
             closeAuthModal();
             clearAuthForms();
@@ -3688,6 +3740,9 @@ ORDERS.push(newOrder);
             showToast(`Welcome to Fior Glow, ${name.split(' ')[0]}! 🌸`);
         }
 
+        // CHANGED: login now calls /api/auth/login — the server verifies the
+        // password against its bcrypt hash and returns a JWT. The browser
+        // never sees or checks a password hash itself anymore.
         async function submitLogin() {
             const identifier = document.getElementById('loginIdentifier').value.trim();
             const password = document.getElementById('loginPassword').value;
@@ -3696,21 +3751,37 @@ ORDERS.push(newOrder);
             if (!identifier) { showAuthError('Please enter your email or mobile number.'); return; }
             if (!password) { showAuthError('Please enter your password.'); return; }
 
-            const user = findUserByEmailOrPhone(identifier);
-            if (!user) { showAuthError('No account found with that email or mobile number.'); return; }
-
-            const passwordHash = await hashPassword(password);
-            if (passwordHash !== user.passwordHash) {
-                showAuthError('Incorrect password. Please try again.');
+            let data;
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ identifier, password })
+                });
+                data = await res.json();
+                if (!res.ok) { showAuthError(data.error || 'Login failed'); return; }
+            } catch (e) {
+                showAuthError('Network error — please check your connection and try again.');
                 return;
             }
 
-            try { localStorage.setItem(CURRENT_USER_KEY, user.email.toLowerCase()); } catch (e) { }
+            try { localStorage.setItem(AUTH_TOKEN_KEY, data.token); } catch (e) { }
+
+            // keep the local USERS list (used by the Admin Panel + profile
+            // pages) in sync with what the server just confirmed
+            let localUser = findUserByEmailOrPhone(data.user.email);
+            if (!localUser) {
+                localUser = { id: Date.now(), name: data.user.name, email: data.user.email, phone: data.user.phone, notify: data.user.notify, addresses: data.user.addresses || [], createdAt: data.user.createdAt };
+                USERS.push(localUser);
+                await saveUsers();
+            }
+
+            try { localStorage.setItem(CURRENT_USER_KEY, data.user.email); } catch (e) { }
 
             closeAuthModal();
             clearAuthForms();
             renderAccountNav();
-            showToast(`Welcome back, ${user.name.split(' ')[0]}! 🌸`);
+            showToast(`Welcome back, ${data.user.name.split(' ')[0]}! 🌸`);
         }
 
         function clearAuthForms() {
@@ -3721,6 +3792,7 @@ ORDERS.push(newOrder);
 
         function logoutCustomer() {
             try { localStorage.removeItem(CURRENT_USER_KEY); } catch (e) { }
+            try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch (e) { }
             closeProfileModal();
             closeAccountDropdown();
             renderAccountNav();
